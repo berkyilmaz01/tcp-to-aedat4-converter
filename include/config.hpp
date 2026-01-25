@@ -17,8 +17,8 @@ struct Config {
     // FRAME SETTINGS
     // =========================================================================
     
-    int width = 1280;           // Frame width in pixels
-    int height = 780;           // Frame height in pixels
+    int width = 2048;           // Frame width in pixels (2048x2048 = 1MB frames)
+    int height = 2048;          // Frame height in pixels
     
     // Auto-calculated (do not modify)
     int pixels_per_channel() const { return width * height; }
