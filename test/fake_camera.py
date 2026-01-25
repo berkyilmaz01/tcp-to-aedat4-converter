@@ -84,9 +84,14 @@ def create_moving_pattern_frame(frame_num: int) -> bytes:
 def main():
     parser = argparse.ArgumentParser(description="Fake camera simulator for testing")
     parser.add_argument("--port", type=int, default=5000, help="TCP port to listen on")
-    parser.add_argument("--fps", type=int, default=500, help="Frames per second")
+    parser.add_argument("--fps", type=int, default=500, help="Frames per second (must be > 0)")
     parser.add_argument("--no-header", action="store_true", help="Don't send frame size header")
     args = parser.parse_args()
+
+    # Validate FPS argument
+    if args.fps <= 0:
+        print(f"Error: --fps must be a positive integer, got {args.fps}", file=sys.stderr)
+        sys.exit(1)
 
     # Setup signal handler
     signal.signal(signal.SIGINT, signal_handler)

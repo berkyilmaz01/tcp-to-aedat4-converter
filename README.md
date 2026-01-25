@@ -4,7 +4,7 @@ Convert raw binary event camera frames received over TCP into AEDAT4 format for 
 
 ## Overview
 
-```
+```text
 FPGA/Camera  ──TCP──►  [Converter]  ──TCP──►  DV Viewer (visualization)
  (port 5000)                                    (port 7777)
 ```
@@ -102,7 +102,7 @@ cd ~/tcp-to-aedat4-converter
 python3 test/fake_camera.py
 ```
 Expected output:
-```
+```text
 Fake camera listening on port 5000
 Frame size: 249600 bytes (1280x780, 2 channels)
 Target FPS: 500
@@ -115,7 +115,7 @@ cd ~/tcp-to-aedat4-converter/build
 ./converter
 ```
 Expected output:
-```
+```text
 TCP to AEDAT4 Converter
 Configuration:
   Frame size: 1280 x 780
@@ -139,7 +139,7 @@ dv-gui
 4. Click the **Play button** to start visualization
 5. Two moving circles should appear (positive and negative polarity events)
 
-```
+```text
 Expected visualization:
 ┌────────────────────────────┐
 │     ●                      │  ← Positive events (horizontal motion)
@@ -203,7 +203,7 @@ dv-gui
 ## Frame Format Specification
 
 ### Packet Structure (with header)
-```
+```text
 ┌──────────────────┬─────────────────────────────────────────┐
 │ 4 bytes (uint32) │              Frame Data                 │
 │   Frame Size     │         (249,600 bytes)                 │
@@ -212,7 +212,7 @@ dv-gui
 ```
 
 ### Frame Data Layout
-```
+```text
 ┌─────────────────────────────┬─────────────────────────────┐
 │     Positive Channel        │     Negative Channel        │
 │     (124,800 bytes)         │     (124,800 bytes)         │
@@ -221,7 +221,7 @@ dv-gui
 ```
 
 ### Bit Packing (Default: LSB first, Row-major)
-```
+```text
 Byte 0: [bit7][bit6][bit5][bit4][bit3][bit2][bit1][bit0]
         (msb_first=false: bit0 corresponds to first pixel)
 
