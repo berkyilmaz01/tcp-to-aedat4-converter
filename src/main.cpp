@@ -3,6 +3,7 @@
 #include "frame_unpacker.hpp"
 
 #include <dv-processing/io/network_writer.hpp>
+#include <dv-processing/io/stream.hpp>
 #include <dv-processing/core/event.hpp>
 
 #include <iostream>
@@ -78,11 +79,14 @@ int main(int argc, char* argv[])
     // Create AEDAT4 TCP server (DV viewer connects here)
     std::cout << "Starting AEDAT4 server on port " << config.aedat_port << "..." << std::endl;
     cv::Size resolution = unpacker.getResolution();
-    
+
+    // Create event stream for the NetworkWriter
+    dv::io::Stream eventStream = dv::io::Stream::EventStream(0, "events", "DVS", resolution);
+
     dv::io::NetworkWriter writer(
         "0.0.0.0",
         static_cast<uint16_t>(config.aedat_port),
-        resolution
+        eventStream
     );
     
     std::cout << "AEDAT4 server started. DV viewer can connect to port " << config.aedat_port << std::endl;
