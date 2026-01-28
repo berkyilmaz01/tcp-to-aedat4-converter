@@ -5,7 +5,7 @@
 Convert raw binary event camera frames received over TCP into AEDAT4 format,
 and serve them via TCP so existing DV software can display them.
 
-## 2. Known Information (from Vedant)
+## 2. Known Information 
 
 | Item | Value | Status |
 |------|-------|--------|
