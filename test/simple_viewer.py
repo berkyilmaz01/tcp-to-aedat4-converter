@@ -5,8 +5,11 @@ Simple Event Viewer - No dv-processing required!
 This viewer connects to the fake camera directly and visualizes the 2-bit packed frames.
 It bypasses the converter entirely for testing/visualization purposes.
 
+Handles up to 10K+ FPS by displaying only every Nth frame.
+
 Usage:
     python3 simple_viewer.py
+    python3 simple_viewer.py --display-fps 60
 """
 
 import socket
@@ -14,6 +17,8 @@ import numpy as np
 import cv2
 import signal
 import sys
+import time
+import argparse
 
 # Settings - must match FPGA/fake camera
 WIDTH = 1280
@@ -32,33 +37,32 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 def unpack_frame(data):
-    """Unpack 2-bit packed frame to visualization image"""
-    # Create output image (grayscale)
-    img = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
-    img[:] = 128  # Gray background (no events)
+    """Unpack 2-bit packed frame to visualization image (optimized with numpy)"""
+    # Convert to numpy array
+    arr = np.frombuffer(data, dtype=np.uint8)
     
-    pixel_idx = 0
-    for byte_idx, byte_val in enumerate(data):
-        if byte_val == 0:
-            pixel_idx += 4
-            continue
-            
-        for shift in [6, 4, 2, 0]:
-            if pixel_idx >= WIDTH * HEIGHT:
-                break
-            
-            pixel = (byte_val >> shift) & 0x03
-            
-            if pixel != 0:
-                y = pixel_idx // WIDTH
-                x = pixel_idx % WIDTH
-                
-                if pixel == 0x01:  # Positive polarity (p=1)
-                    img[y, x] = 255  # White
-                elif pixel == 0x02:  # Negative polarity (p=0)
-                    img[y, x] = 0    # Black
-            
-            pixel_idx += 1
+    # Extract 4 pixels from each byte using vectorized operations
+    p0 = (arr >> 6) & 0x03  # First pixel (bits 7-6)
+    p1 = (arr >> 4) & 0x03  # Second pixel (bits 5-4)
+    p2 = (arr >> 2) & 0x03  # Third pixel (bits 3-2)
+    p3 = arr & 0x03         # Fourth pixel (bits 1-0)
+    
+    # Interleave pixels: [p0[0], p1[0], p2[0], p3[0], p0[1], p1[1], ...]
+    pixels = np.empty(len(arr) * 4, dtype=np.uint8)
+    pixels[0::4] = p0
+    pixels[1::4] = p1
+    pixels[2::4] = p2
+    pixels[3::4] = p3
+    
+    # Trim to exact resolution
+    pixels = pixels[:WIDTH * HEIGHT]
+    
+    # Map values: 0->128 (gray), 1->255 (white), 2->0 (black), 3->128 (gray)
+    lut = np.array([128, 255, 0, 128], dtype=np.uint8)
+    img = lut[pixels]
+    
+    # Reshape to image
+    img = img.reshape((HEIGHT, WIDTH))
     
     return img
 
@@ -66,12 +70,21 @@ def unpack_frame(data):
 def main():
     global running
     
+    parser = argparse.ArgumentParser(description="Simple Event Viewer for 10K+ FPS")
+    parser.add_argument("--display-fps", type=int, default=60, help="Target display FPS (default: 60)")
+    parser.add_argument("--port", type=int, default=PORT, help=f"Port to listen on (default: {PORT})")
+    args = parser.parse_args()
+    
+    display_fps = args.display_fps
+    port = args.port
+    
     print("=" * 60)
-    print("Simple Event Viewer")
+    print("Simple Event Viewer (10K+ FPS capable)")
     print("=" * 60)
     print(f"Resolution: {WIDTH}x{HEIGHT}")
     print(f"Frame size: {FRAME_SIZE} bytes")
-    print(f"Listening on port: {PORT}")
+    print(f"Listening on port: {port}")
+    print(f"Display target: {display_fps} FPS")
     print("=" * 60)
     print()
     print("This viewer acts as a TCP SERVER.")
@@ -86,16 +99,16 @@ def main():
     server.settimeout(1.0)
     
     try:
-        server.bind(("0.0.0.0", PORT))
+        server.bind(("0.0.0.0", port))
         server.listen(1)
-        print(f"Waiting for connection on port {PORT}...")
+        print(f"Waiting for connection on port {port}...")
         
         client = None
         while running and client is None:
             try:
                 client, addr = server.accept()
                 print(f"Connected: {addr}")
-                client.settimeout(1.0)
+                client.settimeout(0.1)  # Short timeout for responsiveness
             except socket.timeout:
                 continue
         
@@ -106,13 +119,24 @@ def main():
         cv2.namedWindow("Event Viewer", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Event Viewer", 1280, 720)
         
+        # Statistics
         frame_count = 0
+        display_count = 0
         buffer = b""
+        
+        # FPS calculation
+        fps_start_time = time.time()
+        fps_frame_count = 0
+        current_fps = 0.0
+        
+        # Display timing
+        display_interval = 1.0 / display_fps
+        last_display_time = time.time()
         
         while running:
             try:
-                # Receive data
-                chunk = client.recv(65536)
+                # Receive data (non-blocking style with short timeout)
+                chunk = client.recv(262144)  # 256KB buffer for high throughput
                 if not chunk:
                     print("Connection closed")
                     break
@@ -120,33 +144,57 @@ def main():
                 buffer += chunk
                 
                 # Process complete frames
+                frames_this_batch = 0
                 while len(buffer) >= FRAME_SIZE:
                     frame_data = buffer[:FRAME_SIZE]
                     buffer = buffer[FRAME_SIZE:]
                     
-                    # Unpack and display
-                    img = unpack_frame(frame_data)
-                    
-                    # Add frame counter
-                    cv2.putText(img, f"Frame: {frame_count}", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 2)
-                    
-                    cv2.imshow("Event Viewer", img)
                     frame_count += 1
+                    fps_frame_count += 1
+                    frames_this_batch += 1
                     
-                    if frame_count % 100 == 0:
-                        print(f"Frames received: {frame_count}")
+                    # Only display at target FPS
+                    current_time = time.time()
+                    if current_time - last_display_time >= display_interval:
+                        # Unpack and display this frame
+                        img = unpack_frame(frame_data)
+                        
+                        # Add stats overlay
+                        cv2.putText(img, f"Frame: {frame_count}", (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                        cv2.putText(img, f"Receive FPS: {current_fps:.0f}", (10, 60),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        cv2.putText(img, f"Display FPS: {display_fps}", (10, 90),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+                        cv2.putText(img, f"Buffer: {len(buffer)//1024}KB", (10, 120),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+                        
+                        cv2.imshow("Event Viewer", img)
+                        display_count += 1
+                        last_display_time = current_time
+                        
+                        # Check for key press
+                        key = cv2.waitKey(1) & 0xFF
+                        if key == ord('q') or key == 27:
+                            running = False
+                            break
                 
-                # Check for key press
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q') or key == 27:  # q or ESC
-                    break
+                # Calculate FPS every second
+                elapsed = time.time() - fps_start_time
+                if elapsed >= 1.0:
+                    current_fps = fps_frame_count / elapsed
+                    print(f"Receiving: {current_fps:.0f} FPS | Total: {frame_count} | Buffer: {len(buffer)//1024}KB")
+                    fps_frame_count = 0
+                    fps_start_time = time.time()
                     
             except socket.timeout:
-                # Check for key press even when no data
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q') or key == 27:
-                    break
+                # Still check for display/key even when no data
+                current_time = time.time()
+                if current_time - last_display_time >= display_interval:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q') or key == 27:
+                        break
+                    last_display_time = current_time
                 continue
             except Exception as e:
                 print(f"Error: {e}")
@@ -159,7 +207,13 @@ def main():
     finally:
         server.close()
         cv2.destroyAllWindows()
-        print(f"Total frames: {frame_count}")
+        
+        # Final stats
+        print()
+        print("=" * 60)
+        print(f"Total frames received: {frame_count}")
+        print(f"Total frames displayed: {display_count}")
+        print("=" * 60)
 
 
 if __name__ == "__main__":
