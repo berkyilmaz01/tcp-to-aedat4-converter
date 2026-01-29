@@ -5,123 +5,119 @@
 Convert raw binary event camera frames received over TCP into AEDAT4 format,
 and serve them via TCP so existing DV software can display them.
 
-## 2. Known Information 
+## 2. FPGA Data Format
 
-| Item | Value | Status |
-|------|-------|--------|
-| Frame dimensions | 1280 × 780 pixels|
-| Channels | 2 (positive, negative) |
-| Data format | Bits (1 bit per pixel per channel) | 
-| Total frame size | 2 Mb = 249,600 bytes |
-| Timestamps | NOT sent (frames only)|
-| Protocol | TCP (most probably) |
-| Frame rate | 500-1000 FPS |
-| Connection type | Point-to-point |
-| OS | Windows or Linux | 
+The FPGA sends frames using a 2-bit packed pixel format:
 
-## 3. Unknown Information (make configurable)
+| Item | Value |
+|------|-------|
+| Frame dimensions | 1280 × 720 pixels |
+| Pixels per frame | 921,600 |
+| Bits per pixel | 2 |
+| Bytes per frame | 230,400 |
+| Pixel encoding | 00=none, 01=positive, 10=negative |
+| Byte order | MSB first (pixel 0 in bits 7-6) |
+| Protocol | TCP |
+| Port | 6000 |
+| Header | None (raw frames) |
+| Frame rate | ~100 FPS (SLICE_PERIOD_US = 10000) |
 
-| Item | Default | Notes |
-|------|---------|-------|
-| TCP port | 5000 | Vedant will confirm |
-| Frame header | Yes (4 bytes) | Unknown if camera sends size header |
-| Bit order | LSB first | Unknown, may need to flip |
-| Channel order | Positive first | Unknown which comes first |
-| Pixel order | Row-major | Unknown, may be column-major |
-| Byte order | Little-endian | Unknown |
+### Pixel Encoding
 
-**Strategy**: Make ALL unknowns configurable. If display looks wrong, flip a flag.
+```
+Each pixel = 2 bits:
+  00 = no event
+  01 = positive polarity (p=1, brightness increased)
+  10 = negative polarity (p=0, brightness decreased)
+  11 = unused
 
-## 4. Data Flow
+Each byte contains 4 pixels (MSB first):
+  Byte: [pixel0][pixel1][pixel2][pixel3]
+        bits7-6 bits5-4 bits3-2 bits1-0
+```
+
+### FPGA set_pixel Reference
+
+```cpp
+static inline void set_pixel(uint8_t *frame, int x, int y, int p) {
+    const size_t pixel_index = (size_t)y * W + (size_t)x;
+    const size_t byte_index  = pixel_index >> 2;
+    const int    shift       = (3 - (pixel_index & 3)) * 2;
+    const uint8_t v = (p == 0) ? 0b10 : 0b01;
+    frame[byte_index] = (frame[byte_index] & ~(0b11 << shift)) | (v << shift);
+}
+```
+
+## 3. Data Flow
 
 ```
 ┌─────────────────┐     ┌─────────────────────────┐     ┌─────────────────┐
 │  Event Camera   │────▶│   THIS CONVERTER        │────▶│   DV Viewer     │
-│  (or simulator) │     │                         │     │   (existing)    │
+│  (FPGA/ZCU)     │     │                         │     │   (existing)    │
 │                 │     │  1. Receive TCP         │     │                 │
-│  Sends binary   │     │  2. Unpack bits→events  │     │  Connects to    │
-│  frames         │     │  3. Generate timestamps │     │  AEDAT4 stream  │
+│  Sends 2-bit    │     │  2. Unpack 2-bit→events │     │  Connects to    │
+│  packed frames  │     │  3. Generate timestamps │     │  AEDAT4 stream  │
 │                 │     │  4. Serve as AEDAT4     │     │                 │
-│  Port: ?????    │     │  In: conf, Out: conf    │     │  Port: conf     │
+│  Port: 6000     │     │  Out: 7777              │     │  Port: 7777     │
 └─────────────────┘     └─────────────────────────┘     └─────────────────┘
-                              ALL CONFIGURABLE
 ```
 
-## 5. Input Format (From Camera)
-
-- **Protocol**: TCP (configurable: could support UDP later)
-- **Frame dimensions**: 1280 x 780 pixels (configurable)
-- **Channels**: 2 (positive events, negative events)
-- **Encoding**: 1 bit per pixel per channel
-- **Frame size**: 2 × 1280 × 780 / 8 = 249,600 bytes (auto-calculated)
-- **Frame rate**: 500-1000 FPS
-- **Timestamps**: NOT included - we generate them from frame rate
-- **Header**: CONFIGURABLE (with or without size header)
-
-### Frame Layout (configurable order):
-```
-[Optional N-byte header: frame size] ← configurable: has_header, header_size
-[Channel A: 124,800 bytes]           ← configurable: positive_first
-[Channel B: 124,800 bytes]
-```
-
-### Bit Layout (all configurable):
-- Bit order: LSB first or MSB first ← configurable: msb_first
-- Pixel order: Row-major or column-major ← configurable: row_major
-- Channel order: Positive first or negative first ← configurable: positive_first
-
-## 6. Output Format (To DV Viewer)
+## 4. Output Format (To DV Viewer)
 
 - **Protocol**: TCP (server mode)
-- **Port**: CONFIGURABLE (default 7777)
+- **Port**: 7777 (configurable)
 - **Format**: AEDAT4 (handled by dv-processing library)
 - **Data type**: Event stream (x, y, timestamp, polarity)
 - **Timestamps**: Generated from frame number × frame_interval_us
 - **Library**: dv::io::NetworkWriter
 
-## 7. Module Breakdown
+## 5. Module Breakdown
 
-### 7.1 Config (include/config.hpp)
+### 5.1 Config (include/config.hpp)
 All adjustable parameters in one place:
 - Frame: width, height
 - Network: camera_ip, camera_port, aedat_port
-- Bit unpacking: msb_first, positive_first, row_major
 - Frame header: has_header, header_size
 - Timing: frame_interval_us (for timestamp generation)
 
-### 7.2 TCP Receiver (include/tcp_receiver.hpp, src/tcp_receiver.cpp)
+### 5.2 TCP Receiver (include/tcp_receiver.hpp, src/tcp_receiver.cpp)
 - Connect to camera TCP server (IP and port configurable)
 - Receive complete frames (handle partial reads)
 - Support optional frame headers
 - Cross-platform (Linux/Windows)
 - Large receive buffer for high throughput
 
-### 7.3 Frame Unpacker (include/frame_unpacker.hpp, src/frame_unpacker.cpp)
-- Unpack binary bits into event list
-- Convert to dv::EventStore format
-- All bit/pixel ordering configurable
-- Generate timestamps from frame count
+### 5.3 UDP Receiver (include/udp_receiver.hpp, src/udp_receiver.cpp)
+- Bind to UDP port and receive datagrams
+- Accumulate packets into complete frames
+- Handle leftover bytes across frame boundaries
 
-### 7.4 Main (src/main.cpp)
+### 5.4 Frame Unpacker (include/frame_unpacker.hpp, src/frame_unpacker.cpp)
+- Unpack 2-bit packed pixels into event list
+- Convert to dv::EventStore format
+- Generate timestamps from frame count
+- Optimized for sparse data (skip zero bytes)
+
+### 5.5 Main (src/main.cpp)
 - Load configuration
 - Initialize components
 - Main loop: receive → unpack → send
 - Statistics printing (FPS, events/sec, throughput)
 - Graceful shutdown
 
-### 7.5 Test Simulator (test/fake_camera.py)
-- Python script that simulates camera
-- Generates moving patterns (circle, lines, etc.)
+### 5.6 Test Simulator (test/fake_camera.py)
+- Python script that simulates FPGA
+- Generates moving patterns using 2-bit encoding
+- Matches FPGA frame format exactly
 - Configurable: resolution, FPS, port
-- For testing without real hardware
 
-## 8. Dependencies
+## 6. Dependencies
 
 - **dv-processing**: AEDAT4 encoding and NetworkWriter
 - **OpenCV**: Used by dv-processing internally
-- **Standard sockets**: TCP networking (cross-platform)
+- **Standard sockets**: TCP/UDP networking (cross-platform)
 
-## 9. Build & Run
+## 7. Build & Run
 
 ```bash
 # Build
@@ -137,11 +133,9 @@ python3 test/fake_camera.py
 
 # Terminal 3: View with DV software
 dv-gui  # Then connect to 127.0.0.1:7777
-# Or use command line:
-dv-tcpstat -i 127.0.0.1 -p 7777 -r
 ```
 
-## 10. Configuration Options
+## 8. Configuration Options
 
 All options in `include/config.hpp`:
 
@@ -149,53 +143,55 @@ All options in `include/config.hpp`:
 | Option | Default | Description |
 |--------|---------|-------------|
 | width | 1280 | Frame width in pixels |
-| height | 780 | Frame height in pixels |
+| height | 720 | Frame height in pixels |
 
 ### Network Settings
 | Option | Default | Description |
 |--------|---------|-------------|
 | camera_ip | "127.0.0.1" | Camera TCP server IP |
-| camera_port | 5000 | Camera TCP server port |
+| camera_port | 6000 | Camera TCP server port |
 | aedat_port | 7777 | AEDAT4 output server port |
 | recv_buffer_size | 50MB | TCP receive buffer size |
-
-### Bit Unpacking Settings (flip these if image looks wrong)
-| Option | Default | Description |
-|--------|---------|-------------|
-| msb_first | false | Bit order: false=LSB first, true=MSB first |
-| positive_first | true | Channel order: true=[pos][neg], false=[neg][pos] |
-| row_major | true | Pixel order: true=row-by-row, false=column-by-column |
 
 ### Frame Header Settings
 | Option | Default | Description |
 |--------|---------|-------------|
-| has_header | true | Does each frame have a size header? |
+| has_header | false | Does each frame have a size header? |
 | header_size | 4 | Header size in bytes (if has_header=true) |
 
 ### Timing Settings
 | Option | Default | Description |
 |--------|---------|-------------|
-| frame_interval_us | 2000 | Microseconds between frames (2000 = 500 FPS) |
+| frame_interval_us | 10000 | Microseconds between frames (10000 = 100 FPS) |
 
-## 11. Troubleshooting Guide
+## 9. Frame Unpacking Algorithm
 
-### If image looks flipped horizontally:
-→ Try: `row_major = false`
+```cpp
+// For each byte in the frame:
+for (int byte_idx = 0; byte_idx < frame_size; byte_idx++) {
+    uint8_t byte_val = frame_data[byte_idx];
+    
+    // Skip zero bytes (no events)
+    if (byte_val == 0) continue;
+    
+    // Extract 4 pixels from this byte
+    for (int px = 0; px < 4; px++) {
+        int shift = 6 - (px * 2);  // 6, 4, 2, 0
+        uint8_t pixel_val = (byte_val >> shift) & 0x03;
+        
+        if (pixel_val == 1 || pixel_val == 2) {
+            int pixel_idx = byte_idx * 4 + px;
+            int x = pixel_idx % width;
+            int y = pixel_idx / width;
+            bool polarity = (pixel_val == 1);  // 01=positive, 10=negative
+            
+            events.emplace_back(timestamp, x, y, polarity);
+        }
+    }
+}
+```
 
-### If image looks flipped vertically:
-→ Try: swap positive_first
-
-### If polarity seems inverted:
-→ Try: `positive_first = false`
-
-### If image looks like random noise:
-→ Try: `msb_first = true`
-
-### If receiving incomplete frames:
-→ Check: `has_header` setting matches camera
-→ Check: frame size calculation matches
-
-## 12. File Structure
+## 10. File Structure
 
 ```
 tcp-to-aedat4-converter/
@@ -205,19 +201,22 @@ tcp-to-aedat4-converter/
 ├── include/
 │   ├── config.hpp        # ALL configuration options
 │   ├── tcp_receiver.hpp  # TCP receiver class
-│   └── frame_unpacker.hpp # Bit unpacking class
+│   ├── udp_receiver.hpp  # UDP receiver class
+│   └── frame_unpacker.hpp # 2-bit unpacking class
 ├── src/
 │   ├── main.cpp          # Entry point
 │   ├── tcp_receiver.cpp  # TCP implementation
+│   ├── udp_receiver.cpp  # UDP implementation
 │   └── frame_unpacker.cpp # Unpacker implementation
 └── test/
-    └── fake_camera.py    # Test camera simulator
+    ├── fake_camera.py     # TCP camera simulator
+    └── fake_camera_udp.py # UDP camera simulator
 ```
 
-## 13. Future Extensions (if needed)
+## 11. Future Extensions (if needed)
 
-- [ ] UDP support (for lower latency)
 - [ ] Command-line argument parsing (override config)
 - [ ] GUI controls (connect/disconnect buttons)
 - [ ] Recording to file
 - [ ] Multiple camera support
+- [ ] Variable frame size support

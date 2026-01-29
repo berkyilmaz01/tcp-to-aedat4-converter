@@ -28,9 +28,10 @@
 namespace converter {
 
 /**
- * TCP Receiver class
+ * TCP Receiver class (SERVER MODE)
  * 
- * Connects to the camera TCP server and receives binary frames.
+ * Listens for incoming TCP connections from the FPGA/camera.
+ * The FPGA acts as client and connects to this server.
  * Handles partial reads and optional frame headers.
  */
 class TcpReceiver {
@@ -42,7 +43,7 @@ public:
     explicit TcpReceiver(const Config& cfg);
     
     /**
-     * Destructor - closes socket
+     * Destructor - closes sockets
      */
     ~TcpReceiver();
     
@@ -55,18 +56,18 @@ public:
     TcpReceiver& operator=(TcpReceiver&& other) noexcept;
     
     /**
-     * Connect to the camera TCP server
-     * @return true if connection successful
+     * Start listening and wait for FPGA connection
+     * @return true if connection accepted successfully
      */
     bool connect();
     
     /**
-     * Disconnect from the camera
+     * Disconnect and close sockets
      */
     void disconnect();
     
     /**
-     * Check if connected
+     * Check if a client is connected
      * @return true if connected
      */
     bool isConnected() const;
@@ -116,7 +117,8 @@ private:
     static void cleanupSocketLib();
     
     const Config& config_;
-    socket_t socket_;
+    socket_t server_socket_;   // Listening socket
+    socket_t client_socket_;   // Connected client (FPGA)
     bool connected_;
     
     uint64_t total_bytes_received_;

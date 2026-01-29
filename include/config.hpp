@@ -9,7 +9,7 @@ namespace converter {
  * Protocol type for camera connection
  */
 enum class Protocol {
-    TCP,    // TCP client - connects to camera server
+    TCP,    // TCP server - listens for FPGA connection (FPGA connects to us)
     UDP     // UDP receiver - binds to port and receives datagrams
 };
 
@@ -26,9 +26,14 @@ inline const char* protocolToString(Protocol p) {
 
 /**
  * Configuration for TCP/UDP to AEDAT4 Converter
- *
- * Modify these values to match your camera settings.
- * If the image looks wrong, try flipping the bit unpacking flags.
+ * 
+ * Configured for FPGA 2-bit packed pixel format:
+ *   - Each pixel = 2 bits
+ *   - 00 = no event
+ *   - 01 = positive polarity (p=1)
+ *   - 10 = negative polarity (p=0)
+ *   - 11 = unused
+ *   - 4 pixels per byte, MSB first (bits 7-6 = pixel 0)
  */
 struct Config {
 
@@ -37,27 +42,27 @@ struct Config {
     // =========================================================================
 
     int width = 1280;           // Frame width in pixels
-    int height = 780;           // Frame height in pixels
+    int height = 720;           // Frame height in pixels (FPGA uses 720)
 
-    // Auto-calculated (do not modify)
-    int pixels_per_channel() const { return width * height; }
-    int bytes_per_channel() const { return pixels_per_channel() / 8; }
-    int frame_size() const { return 2 * bytes_per_channel(); }  // 2 channels
+    // Auto-calculated frame size for 2-bit packed pixels
+    // Each pixel = 2 bits, so 4 pixels per byte
+    int total_pixels() const { return width * height; }
+    int frame_size() const { return (total_pixels() + 3) / 4; }  // 230,400 bytes for 1280x720
 
     // =========================================================================
     // PROTOCOL SELECTION
     // =========================================================================
 
-    Protocol protocol = Protocol::UDP;  // UDP is default (used by FPGA)
+    Protocol protocol = Protocol::TCP;  // TCP for FPGA connection
 
     // =========================================================================
-    // NETWORK SETTINGS - INPUT (from camera)
+    // NETWORK SETTINGS - INPUT (from camera/FPGA)
     // =========================================================================
 
-    // For TCP: IP address to connect to
+    // For TCP: Not used (converter is server, listens on all interfaces)
     // For UDP: IP to bind to (use "0.0.0.0" to listen on all interfaces)
     std::string camera_ip = "0.0.0.0";
-    int camera_port = 5000;                // Camera port (TCP or UDP)
+    int camera_port = 6000;               // Port to listen on (FPGA connects here)
 
     // Receive buffer size (bytes) - larger = handles bursts better
     int recv_buffer_size = 50 * 1024 * 1024;  // 50 MB
@@ -83,42 +88,20 @@ struct Config {
     // =========================================================================
 
     // Does the camera send a size header before each frame?
-    // Note: FPGA typically sends raw data without headers (set to false)
+    // FPGA sends raw data without headers
     bool has_header = false;
     
     // Header size in bytes (only used if has_header = true)
-    // Common values: 4 (uint32_t size)
     int header_size = 4;
-    
-    // =========================================================================
-    // BIT UNPACKING SETTINGS
-    // Flip these if the image looks wrong!
-    // =========================================================================
-    
-    // Bit order within each byte
-    // false = LSB first (bit 0 is first pixel)
-    // true  = MSB first (bit 7 is first pixel)
-    bool msb_first = false;
-    
-    // Channel order in frame data
-    // true  = [positive channel][negative channel]
-    // false = [negative channel][positive channel]
-    bool positive_first = true;
-    
-    // Pixel ordering
-    // true  = row-major (pixels go left-to-right, then next row)
-    // false = column-major (pixels go top-to-bottom, then next column)
-    bool row_major = true;
     
     // =========================================================================
     // TIMING SETTINGS
     // =========================================================================
     
     // Microseconds between frames (for timestamp generation)
-    // 2000 us = 500 FPS
-    // 1000 us = 1000 FPS
-    // 200 us = 5000 FPS (for 10G Ethernet demo)
-    int64_t frame_interval_us = 200;
+    // FPGA uses SLICE_PERIOD_US = 10000 (100 FPS)
+    // Adjust based on actual frame rate from FPGA
+    int64_t frame_interval_us = 10000;
     
     // =========================================================================
     // DEBUG SETTINGS

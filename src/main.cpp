@@ -68,9 +68,9 @@ int main(int argc, char* argv[])
     std::cout << "  Frame size: " << config.width << " x " << config.height << std::endl;
     std::cout << "  Frame data size: " << config.frame_size() << " bytes" << std::endl;
     if (config.protocol == converter::Protocol::TCP) {
-        std::cout << "  Camera (connect to): " << config.camera_ip << ":" << config.camera_port << std::endl;
+        std::cout << "  TCP Server port: " << config.camera_port << " (FPGA connects here)" << std::endl;
     } else {
-        std::cout << "  Listen port: " << config.camera_port << std::endl;
+        std::cout << "  UDP Listen port: " << config.camera_port << std::endl;
         std::cout << "  UDP packet size: " << config.udp_packet_size << " bytes" << std::endl;
     }
     std::cout << "  AEDAT4 output port: " << config.aedat_port << std::endl;
@@ -78,9 +78,7 @@ int main(int argc, char* argv[])
     if (config.protocol == converter::Protocol::TCP) {
         std::cout << "  Has header: " << (config.has_header ? "yes" : "no") << std::endl;
     }
-    std::cout << "  MSB first: " << (config.msb_first ? "yes" : "no") << std::endl;
-    std::cout << "  Positive first: " << (config.positive_first ? "yes" : "no") << std::endl;
-    std::cout << "  Row major: " << (config.row_major ? "yes" : "no") << std::endl;
+    std::cout << "  Pixel format: 2-bit packed (FPGA format)" << std::endl;
     std::cout << std::endl;
 
     // Create receiver based on protocol
@@ -130,7 +128,7 @@ int main(int argc, char* argv[])
     
     // Connect/bind to receive data
     if (config.protocol == converter::Protocol::TCP) {
-        std::cout << "Connecting to camera..." << std::endl;
+        std::cout << "Starting TCP server (waiting for FPGA connection)..." << std::endl;
     } else {
         std::cout << "Binding UDP socket..." << std::endl;
     }

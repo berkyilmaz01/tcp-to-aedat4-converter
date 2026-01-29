@@ -7,44 +7,12 @@ namespace converter {
 FrameUnpacker::FrameUnpacker(const Config& cfg)
     : config_(cfg)
 {
-    initLookupTables();
-}
-
-void FrameUnpacker::initLookupTables()
-{
-    // Initialize bit position lookup table
-    // For each possible byte value (0-255), store which bits are set
-    for (int byte_val = 0; byte_val < 256; byte_val++) {
-        int count = 0;
-        for (int bit = 0; bit < 8; bit++) {
-            int actual_bit = config_.msb_first ? (7 - bit) : bit;
-            if (byte_val & (1 << actual_bit)) {
-                bit_positions_[byte_val][count++] = static_cast<int8_t>(bit);
-            }
-        }
-        bit_counts_[byte_val] = static_cast<int8_t>(count);
-        // Fill remaining slots with -1 (unused)
-        for (int i = count; i < MAX_BITS_PER_BYTE; i++) {
-            bit_positions_[byte_val][i] = -1;
-        }
-    }
-
-    // Pre-compute base coordinates for each byte index
-    int bytes_per_channel = config_.bytes_per_channel();
-    byte_to_base_x_.resize(bytes_per_channel);
-    byte_to_base_y_.resize(bytes_per_channel);
-
-    for (int byte_idx = 0; byte_idx < bytes_per_channel; byte_idx++) {
-        int base_bit = byte_idx * 8;
-        if (config_.row_major) {
-            // Row-major: bit_index = y * width + x
-            byte_to_base_y_[byte_idx] = static_cast<int16_t>(base_bit / config_.width);
-            byte_to_base_x_[byte_idx] = static_cast<int16_t>(base_bit % config_.width);
-        } else {
-            // Column-major: bit_index = x * height + y
-            byte_to_base_x_[byte_idx] = static_cast<int16_t>(base_bit / config_.height);
-            byte_to_base_y_[byte_idx] = static_cast<int16_t>(base_bit % config_.height);
-        }
+    // Pre-compute base pixel index for each byte
+    int frame_size = config_.frame_size();
+    byte_to_base_pixel_.resize(frame_size);
+    
+    for (int byte_idx = 0; byte_idx < frame_size; byte_idx++) {
+        byte_to_base_pixel_[byte_idx] = byte_idx * 4;  // 4 pixels per byte
     }
 }
 
@@ -56,54 +24,6 @@ int FrameUnpacker::getExpectedFrameSize() const
 cv::Size FrameUnpacker::getResolution() const
 {
     return cv::Size(config_.width, config_.height);
-}
-
-void FrameUnpacker::unpackChannelFast(
-    const uint8_t* channel_data,
-    int64_t timestamp,
-    bool polarity,
-    dv::EventStore& events)
-{
-    const int bytes_per_channel = config_.bytes_per_channel();
-    const int width = config_.width;
-    const int height = config_.height;
-    const bool row_major = config_.row_major;
-
-    for (int byte_idx = 0; byte_idx < bytes_per_channel; byte_idx++) {
-        uint8_t byte_val = channel_data[byte_idx];
-
-        // Skip zero bytes entirely - this is the key optimization!
-        // In sparse event data, most bytes are zero
-        if (byte_val == 0) {
-            continue;
-        }
-
-        // Get pre-computed base coordinates for this byte
-        int base_x = byte_to_base_x_[byte_idx];
-        int base_y = byte_to_base_y_[byte_idx];
-
-        // Process each set bit using lookup table
-        int num_bits = bit_counts_[byte_val];
-        for (int i = 0; i < num_bits; i++) {
-            int bit_offset = bit_positions_[byte_val][i];
-
-            // Calculate actual x, y from base + offset
-            int16_t x, y;
-            if (row_major) {
-                // In row-major, bits advance along x, then wrap to next y
-                int total_x = base_x + bit_offset;
-                x = static_cast<int16_t>(total_x % width);
-                y = static_cast<int16_t>(base_y + total_x / width);
-            } else {
-                // In column-major, bits advance along y, then wrap to next x
-                int total_y = base_y + bit_offset;
-                y = static_cast<int16_t>(total_y % height);
-                x = static_cast<int16_t>(base_x + total_y / height);
-            }
-
-            events.emplace_back(timestamp, x, y, polarity);
-        }
-    }
 }
 
 size_t FrameUnpacker::unpack(
@@ -134,21 +54,56 @@ size_t FrameUnpacker::unpack(
     // Calculate timestamp for this frame
     int64_t timestamp = static_cast<int64_t>(frame_number) * config_.frame_interval_us;
 
-    // Get pointers to positive and negative channels
-    const uint8_t* pos_channel;
-    const uint8_t* neg_channel;
+    const int width = config_.width;
+    const int height = config_.height;
+    const int total_pixels = config_.total_pixels();
 
-    if (config_.positive_first) {
-        pos_channel = frame_data;
-        neg_channel = frame_data + config_.bytes_per_channel();
-    } else {
-        neg_channel = frame_data;
-        pos_channel = frame_data + config_.bytes_per_channel();
+    // Process each byte (4 pixels per byte)
+    // FPGA format: bits 7-6 = pixel 0, bits 5-4 = pixel 1, bits 3-2 = pixel 2, bits 1-0 = pixel 3
+    // Values: 00 = no event, 01 = positive (p=1), 10 = negative (p=0), 11 = unused
+    
+    for (int byte_idx = 0; byte_idx < expected_size; byte_idx++) {
+        uint8_t byte_val = frame_data[byte_idx];
+        
+        // Skip zero bytes entirely - no events in this byte
+        // This is a key optimization for sparse event data
+        if (byte_val == 0) {
+            continue;
+        }
+        
+        // Base pixel index for this byte
+        int base_pixel = byte_to_base_pixel_[byte_idx];
+        
+        // Extract 4 pixels from this byte (MSB first, as per FPGA format)
+        // shift = 6, 4, 2, 0 for pixels 0, 1, 2, 3
+        for (int px_in_byte = 0; px_in_byte < 4; px_in_byte++) {
+            int shift = 6 - (px_in_byte * 2);
+            uint8_t pixel_val = (byte_val >> shift) & 0x03;
+            
+            // Skip if no event (00) or unused (11)
+            if (pixel_val == 0 || pixel_val == 3) {
+                continue;
+            }
+            
+            // Calculate pixel index
+            int pixel_idx = base_pixel + px_in_byte;
+            
+            // Bounds check (handle last byte which may have padding)
+            if (pixel_idx >= total_pixels) {
+                continue;
+            }
+            
+            // Calculate x, y coordinates (row-major order)
+            int16_t x = static_cast<int16_t>(pixel_idx % width);
+            int16_t y = static_cast<int16_t>(pixel_idx / width);
+            
+            // Determine polarity: 01 = positive (true), 10 = negative (false)
+            bool polarity = (pixel_val == 1);
+            
+            // Add event
+            events.emplace_back(timestamp, x, y, polarity);
+        }
     }
-
-    // Unpack both channels using optimized byte-level processing
-    unpackChannelFast(pos_channel, timestamp, true, events);
-    unpackChannelFast(neg_channel, timestamp, false, events);
 
     if (config_.verbose) {
         std::cout << "Frame " << frame_number << ": unpacked " << events.size() << " events" << std::endl;

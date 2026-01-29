@@ -6,13 +6,35 @@ Convert raw binary event camera frames received over TCP into AEDAT4 format for 
 
 ```text
 FPGA/Camera  ──TCP──►  [Converter]  ──TCP──►  DV Viewer (visualization)
- (port 5000)                                    (port 7777)
+ (client)         (server:6000)          (server:7777)
 ```
 
 This software acts as a bridge between custom event camera hardware and the DV ecosystem:
-1. Receives binary bit-packed frames over TCP
-2. Converts frames to AEDAT4 event format
-3. Streams events to DV viewer for real-time visualization
+1. Acts as TCP server - FPGA connects to converter on port 6000
+2. Receives binary 2-bit packed frames
+3. Converts frames to AEDAT4 event format
+4. Streams events to DV viewer (which connects on port 7777)
+
+---
+
+## Frame Format (FPGA 2-bit Packed)
+
+The converter expects the FPGA's 2-bit packed pixel format:
+
+```text
+Each pixel = 2 bits:
+  00 = no event
+  01 = positive polarity (brightness increased)
+  10 = negative polarity (brightness decreased)
+  11 = unused
+
+4 pixels per byte, MSB first:
+  Byte: [pixel0:2][pixel1:2][pixel2:2][pixel3:2]
+        bits 7-6   bits 5-4   bits 3-2   bits 1-0
+
+Frame size = (width × height + 3) / 4 bytes
+For 1280×720: 230,400 bytes
+```
 
 ---
 
@@ -69,18 +91,11 @@ nano ~/tcp-to-aedat4-converter/include/config.hpp
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `width` | Frame width in pixels | 1280 |
-| `height` | Frame height in pixels | 780 |
+| `height` | Frame height in pixels | 720 |
 | `camera_ip` | FPGA/camera IP address | 127.0.0.1 |
-| `camera_port` | TCP port for incoming frames | 5000 |
-| `has_header` | Whether frames include 4-byte size header | true |
-
-**Bit unpacking settings (adjust if output appears incorrect):**
-
-| Setting | Effect |
-|---------|--------|
-| `msb_first = true` | Use if output appears as random noise |
-| `positive_first = false` | Use if polarity is inverted |
-| `row_major = false` | Use if image is rotated 90 degrees |
+| `camera_port` | TCP port for incoming frames | 6000 |
+| `has_header` | Whether frames include size header | false |
+| `frame_interval_us` | Microseconds between frames | 10000 (100 FPS) |
 
 After modifying settings, rebuild:
 ```bash
@@ -103,9 +118,15 @@ python3 test/fake_camera.py
 ```
 Expected output:
 ```text
-Fake camera listening on port 5000
-Frame size: 249600 bytes (1280x780, 2 channels)
-Target FPS: 500
+==================================================
+Fake Camera Simulator (2-bit FPGA format)
+==================================================
+Resolution: 1280x720
+Frame size: 230400 bytes (2-bit packed)
+TCP port: 6000
+Target FPS: 100
+Header: disabled (raw frames)
+==================================================
 Waiting for connection...
 ```
 
@@ -116,9 +137,10 @@ cd ~/tcp-to-aedat4-converter/build
 ```
 Expected output:
 ```text
-TCP to AEDAT4 Converter
+TCP/UDP to AEDAT4 Converter
 Configuration:
-  Frame size: 1280 x 780
+  Frame size: 1280 x 720
+  Frame data size: 230400 bytes
   ...
 Connecting to camera...
 Connected successfully!
@@ -157,8 +179,8 @@ Expected visualization:
 **Option A: Direct Connection**
 - Connect FPGA directly to PC via Ethernet cable
 - Configure static IPs:
-  - FPGA: 192.168.1.100
-  - PC: 192.168.1.1
+  - FPGA: 192.168.50.10
+  - PC: 192.168.50.20
 
 **Option B: Through Network Switch**
 - Connect both devices to the same switch/router
@@ -172,8 +194,8 @@ nano ~/tcp-to-aedat4-converter/include/config.hpp
 ```
 
 ```cpp
-std::string camera_ip = "192.168.1.100";  // FPGA IP address
-int camera_port = 5000;                    // FPGA TCP port
+std::string camera_ip = "192.168.50.10";  // FPGA IP address
+int camera_port = 6000;                    // FPGA TCP port
 ```
 
 Rebuild after configuration changes:
@@ -196,57 +218,39 @@ dv-gui
 # Connect to 127.0.0.1:7777 as described above
 ```
 
-**FPGA Side:** Initiate frame transmission to the PC IP address on port 5000.
+**FPGA Side:** Initiate frame transmission to the PC IP address on port 6000.
 
 ---
 
-## Frame Format Specification
+## FPGA Data Format Reference
 
-### Packet Structure (with header)
+### Frame Layout (2-bit packed pixels)
 ```text
-┌──────────────────┬─────────────────────────────────────────┐
-│ 4 bytes (uint32) │              Frame Data                 │
-│   Frame Size     │         (249,600 bytes)                 │
-│  Little-endian   │                                         │
-└──────────────────┴─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                 Frame Data                       │
+│            230,400 bytes (for 1280×720)          │
+│                                                  │
+│  Each byte = 4 pixels:                           │
+│  [p0:2][p1:2][p2:2][p3:2]                       │
+│                                                  │
+│  Pixel values:                                   │
+│    00 = no event                                 │
+│    01 = positive (brightness increased)          │
+│    10 = negative (brightness decreased)          │
+│    11 = unused                                   │
+└─────────────────────────────────────────────────┘
 ```
 
-### Frame Data Layout
-```text
-┌─────────────────────────────┬─────────────────────────────┐
-│     Positive Channel        │     Negative Channel        │
-│     (124,800 bytes)         │     (124,800 bytes)         │
-│   1 bit per pixel           │   1 bit per pixel           │
-└─────────────────────────────┴─────────────────────────────┘
-```
-
-### Bit Packing (Default: LSB first, Row-major)
-```text
-Byte 0: [bit7][bit6][bit5][bit4][bit3][bit2][bit1][bit0]
-        (msb_first=false: bit0 corresponds to first pixel)
-
-Pixel arrangement (row-major):
-  Row 0: pixels 0-1279
-  Row 1: pixels 1280-2559
-  ...
-  Row 779: pixels 997,120-998,399
-```
-
-### FPGA Implementation Reference (Pseudocode)
-```verilog
-// Transmit header (4 bytes, little-endian)
-send_byte(frame_size[7:0]);
-send_byte(frame_size[15:8]);
-send_byte(frame_size[23:16]);
-send_byte(frame_size[31:24]);
-
-// Transmit positive channel (124,800 bytes)
-for i = 0 to 124799:
-    send_byte(positive_channel[i]);
-
-// Transmit negative channel (124,800 bytes)
-for i = 0 to 124799:
-    send_byte(negative_channel[i]);
+### FPGA set_pixel Function (Reference)
+```cpp
+// From FPGA code - how pixels are encoded
+static inline void set_pixel(uint8_t *frame, int x, int y, int p) {
+    const size_t pixel_index = (size_t)y * W + (size_t)x;
+    const size_t byte_index  = pixel_index >> 2;  // divide by 4
+    const int    shift       = (3 - (pixel_index & 3)) * 2;
+    const uint8_t v = (p == 0) ? 0b10 : 0b01;  // p=0 → 10, p=1 → 01
+    frame[byte_index] = (frame[byte_index] & ~(0b11 << shift)) | (v << shift);
+}
 ```
 
 ---
@@ -259,17 +263,16 @@ for i = 0 to 124799:
 |---------|-------|----------|
 | "Failed to connect to camera" | Incorrect IP/port or network issue | Verify IP address in config; test with `ping` |
 | "Connection closed by server" | FPGA stopped transmitting | Verify FPGA is running and sending data |
-| No events in DV viewer | DV connected to wrong port | Connect DV to port 7777 (not 5000) |
+| No events in DV viewer | DV connected to wrong port | Connect DV to port 7777 (not 6000) |
 
 ### Image Quality Issues
 
 | Symptom | Solution |
 |---------|----------|
-| Random noise pattern | Set `msb_first = true` |
-| Inverted polarity | Set `positive_first = false` |
-| 90-degree rotation | Set `row_major = false` |
+| Random noise pattern | Verify frame size matches (230,400 bytes for 1280×720) |
+| No events showing | Check that FPGA is encoding pixels correctly |
 | Partial image | Verify `width` and `height` match sensor resolution |
-| Incomplete frames | Verify `has_header` setting matches FPGA output |
+| Wrong coordinates | Check row-major ordering matches FPGA |
 
 ### Performance Issues
 
@@ -292,11 +295,11 @@ cd ~/tcp-to-aedat4-converter/build && make
 # Run converter
 ./converter
 
-# Run simulator
+# Run simulator (TCP)
 python3 ~/tcp-to-aedat4-converter/test/fake_camera.py
 
 # Run simulator with options
-python3 test/fake_camera.py --port 5000 --fps 100
+python3 test/fake_camera.py --port 6000 --fps 100
 
 # Launch DV viewer
 dv-gui
@@ -306,7 +309,7 @@ dv-gui
 
 | Port | Function | Direction |
 |------|----------|-----------|
-| 5000 | Frame input | Camera/FPGA → Converter |
+| 6000 | Frame input | Camera/FPGA → Converter |
 | 7777 | Event output | Converter → DV Viewer |
 
 ### File Locations
@@ -315,7 +318,8 @@ dv-gui
 |------|-------------|
 | `include/config.hpp` | Configuration settings |
 | `build/converter` | Main executable |
-| `test/fake_camera.py` | Camera simulator |
+| `test/fake_camera.py` | Camera simulator (TCP) |
+| `test/fake_camera_udp.py` | Camera simulator (UDP) |
 
 ---
 
@@ -323,12 +327,12 @@ dv-gui
 
 | Parameter | Value |
 |-----------|-------|
-| Resolution | 1280 x 780 pixels |
-| Frame size | 249,600 bytes |
-| Channels | 2 (positive + negative) |
-| Target frame rate | 500-1000 FPS |
-| Maximum throughput | 250 MB/s |
-| Network support | 1GbE, 10GbE |
+| Resolution | 1280 × 720 pixels |
+| Pixels per frame | 921,600 |
+| Frame size | 230,400 bytes |
+| Pixel encoding | 2-bit packed (4 pixels/byte) |
+| Target frame rate | 100 FPS (configurable) |
+| Frame interval | 10,000 μs |
 | Protocol | TCP/IP |
 | Output format | AEDAT4 |
 

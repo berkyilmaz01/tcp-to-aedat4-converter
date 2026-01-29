@@ -14,7 +14,8 @@ bool TcpReceiver::socket_lib_initialized_ = false;
 
 TcpReceiver::TcpReceiver(const Config& cfg)
     : config_(cfg)
-    , socket_(INVALID_SOCK)
+    , server_socket_(INVALID_SOCK)
+    , client_socket_(INVALID_SOCK)
     , connected_(false)
     , total_bytes_received_(0)
     , total_frames_received_(0)
@@ -29,12 +30,14 @@ TcpReceiver::~TcpReceiver()
 
 TcpReceiver::TcpReceiver(TcpReceiver&& other) noexcept
     : config_(other.config_)
-    , socket_(other.socket_)
+    , server_socket_(other.server_socket_)
+    , client_socket_(other.client_socket_)
     , connected_(other.connected_)
     , total_bytes_received_(other.total_bytes_received_)
     , total_frames_received_(other.total_frames_received_)
 {
-    other.socket_ = INVALID_SOCK;
+    other.server_socket_ = INVALID_SOCK;
+    other.client_socket_ = INVALID_SOCK;
     other.connected_ = false;
 }
 
@@ -42,11 +45,13 @@ TcpReceiver& TcpReceiver::operator=(TcpReceiver&& other) noexcept
 {
     if (this != &other) {
         disconnect();
-        socket_ = other.socket_;
+        server_socket_ = other.server_socket_;
+        client_socket_ = other.client_socket_;
         connected_ = other.connected_;
         total_bytes_received_ = other.total_bytes_received_;
         total_frames_received_ = other.total_frames_received_;
-        other.socket_ = INVALID_SOCK;
+        other.server_socket_ = INVALID_SOCK;
+        other.client_socket_ = INVALID_SOCK;
         other.connected_ = false;
     }
     return *this;
@@ -85,66 +90,109 @@ bool TcpReceiver::connect()
         return true;
     }
     
-    // Create socket
-    socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket_ == INVALID_SOCK) {
-        std::cerr << "Failed to create socket: " << SOCKET_ERROR_CODE << std::endl;
+    // Close any existing sockets
+    disconnect();
+    
+    // Create server socket
+    server_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (server_socket_ == INVALID_SOCK) {
+        std::cerr << "Failed to create server socket: " << SOCKET_ERROR_CODE << std::endl;
         return false;
     }
     
-    // Set receive buffer size
+    // Allow address reuse (helps with quick restarts)
+    int reuse = 1;
+    if (setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&reuse), sizeof(reuse)) < 0) {
+        std::cerr << "Warning: Failed to set SO_REUSEADDR" << std::endl;
+    }
+    
+    // Setup server address - bind to all interfaces
+    struct sockaddr_in server_addr;
+    std::memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(config_.camera_port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;  // Bind to all interfaces
+    
+    // Bind socket
+    std::cout << "Binding to port " << config_.camera_port << "..." << std::endl;
+    
+    if (bind(server_socket_, reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
+        std::cerr << "Failed to bind: " << SOCKET_ERROR_CODE << std::endl;
+        disconnect();
+        return false;
+    }
+    
+    // Listen for connections
+    if (listen(server_socket_, 1) < 0) {
+        std::cerr << "Failed to listen: " << SOCKET_ERROR_CODE << std::endl;
+        disconnect();
+        return false;
+    }
+    
+    std::cout << "Listening on port " << config_.camera_port << "..." << std::endl;
+    std::cout << "Waiting for FPGA to connect..." << std::endl;
+    
+    // Accept connection from FPGA
+    struct sockaddr_in client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    
+    client_socket_ = accept(server_socket_, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
+    if (client_socket_ == INVALID_SOCK) {
+        std::cerr << "Failed to accept connection: " << SOCKET_ERROR_CODE << std::endl;
+        disconnect();
+        return false;
+    }
+    
+    // Get client IP for logging
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+    std::cout << "FPGA connected from " << client_ip << ":" << ntohs(client_addr.sin_port) << std::endl;
+    
+    // Set receive buffer size on client socket
     int rcvbuf = config_.recv_buffer_size;
-    if (setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, 
+    if (setsockopt(client_socket_, SOL_SOCKET, SO_RCVBUF, 
                    reinterpret_cast<const char*>(&rcvbuf), sizeof(rcvbuf)) < 0) {
         std::cerr << "Warning: Failed to set receive buffer size" << std::endl;
     }
     
     // Disable Nagle's algorithm for lower latency
     int flag = 1;
-    if (setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY,
+    if (setsockopt(client_socket_, IPPROTO_TCP, TCP_NODELAY,
                    reinterpret_cast<const char*>(&flag), sizeof(flag)) < 0) {
         std::cerr << "Warning: Failed to disable Nagle's algorithm" << std::endl;
-    }
-    
-    // Setup server address
-    struct sockaddr_in server_addr;
-    std::memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(config_.camera_port);
-    
-    if (inet_pton(AF_INET, config_.camera_ip.c_str(), &server_addr.sin_addr) <= 0) {
-        std::cerr << "Invalid IP address: " << config_.camera_ip << std::endl;
-        disconnect();
-        return false;
-    }
-    
-    // Connect to server
-    std::cout << "Connecting to " << config_.camera_ip << ":" << config_.camera_port << "..." << std::endl;
-    
-    if (::connect(socket_, reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
-        std::cerr << "Failed to connect: " << SOCKET_ERROR_CODE << std::endl;
-        disconnect();
-        return false;
     }
     
     connected_ = true;
     total_bytes_received_ = 0;
     total_frames_received_ = 0;
     
-    std::cout << "Connected successfully!" << std::endl;
+    std::cout << "Connection established successfully!" << std::endl;
     return true;
 }
 
 void TcpReceiver::disconnect()
 {
-    if (socket_ != INVALID_SOCK) {
+    // Close client socket
+    if (client_socket_ != INVALID_SOCK) {
 #ifdef _WIN32
-        closesocket(socket_);
+        closesocket(client_socket_);
 #else
-        close(socket_);
+        close(client_socket_);
 #endif
-        socket_ = INVALID_SOCK;
+        client_socket_ = INVALID_SOCK;
     }
+    
+    // Close server socket
+    if (server_socket_ != INVALID_SOCK) {
+#ifdef _WIN32
+        closesocket(server_socket_);
+#else
+        close(server_socket_);
+#endif
+        server_socket_ = INVALID_SOCK;
+    }
+    
     connected_ = false;
 }
 
@@ -158,14 +206,14 @@ bool TcpReceiver::receiveExact(uint8_t* buffer, size_t size)
     size_t total_received = 0;
     
     while (total_received < size) {
-        ssize_t received = recv(socket_, 
+        ssize_t received = recv(client_socket_, 
                                 reinterpret_cast<char*>(buffer + total_received),
                                 size - total_received, 
                                 0);
         
         if (received <= 0) {
             if (received == 0) {
-                std::cerr << "Connection closed by server" << std::endl;
+                std::cerr << "Connection closed by FPGA" << std::endl;
             } else {
                 std::cerr << "Receive error: " << SOCKET_ERROR_CODE << std::endl;
             }
