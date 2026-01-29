@@ -131,6 +131,8 @@ def pregenerate_batch(num_frames: int, batch_size: int) -> tuple:
 
 
 def main():
+    global running
+    
     parser = argparse.ArgumentParser(description="Ultra-fast fake camera for 10K+ FPS")
     parser.add_argument("--target", type=str, default="127.0.0.1", help="Converter IP")
     parser.add_argument("--port", type=int, default=6000, help="Converter port")

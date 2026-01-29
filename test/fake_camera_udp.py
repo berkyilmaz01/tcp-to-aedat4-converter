@@ -144,6 +144,8 @@ def send_frame_udp(sock: socket.socket, target: tuple, frame_data: bytes, packet
 
 
 def main():
+    global running
+    
     parser = argparse.ArgumentParser(description="Fake camera simulator (UDP, 2-bit format) for testing")
     parser.add_argument("--port", type=int, default=6000, help="UDP port to send to (default: 6000)")
     parser.add_argument("--fps", type=int, default=100, help="Frames per second (default: 100)")

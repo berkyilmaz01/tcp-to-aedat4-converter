@@ -127,6 +127,8 @@ def create_moving_pattern_frame(frame_num: int) -> bytes:
 
 
 def main():
+    global running
+    
     parser = argparse.ArgumentParser(description="Fake camera simulator (2-bit format) - connects to converter")
     parser.add_argument("--target", type=str, default="127.0.0.1", help="Converter IP address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=6000, help="Converter port (default: 6000)")
