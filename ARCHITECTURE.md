@@ -148,8 +148,8 @@ All options in `include/config.hpp`:
 ### Network Settings
 | Option | Default | Description |
 |--------|---------|-------------|
-| camera_ip | "127.0.0.1" | Camera TCP server IP |
-| camera_port | 6000 | Camera TCP server port |
+| camera_ip | "0.0.0.0" | Bind address (TCP: unused, UDP: bind to all interfaces) |
+| camera_port | 6000 | Port to listen on (FPGA connects here) |
 | aedat_port | 7777 | AEDAT4 output server port |
 | recv_buffer_size | 50MB | TCP receive buffer size |
 
@@ -195,22 +195,24 @@ for (int byte_idx = 0; byte_idx < frame_size; byte_idx++) {
 
 ```
 tcp-to-aedat4-converter/
-├── ARCHITECTURE.md       # This document
-├── README.md             # User instructions
-├── CMakeLists.txt        # Build configuration
+├── ARCHITECTURE.md          # This document
+├── README.md                # User instructions
+├── CMakeLists.txt           # Build configuration
 ├── include/
-│   ├── config.hpp        # ALL configuration options
-│   ├── tcp_receiver.hpp  # TCP receiver class
-│   ├── udp_receiver.hpp  # UDP receiver class
-│   └── frame_unpacker.hpp # 2-bit unpacking class
+│   ├── config.hpp           # ALL configuration options
+│   ├── tcp_receiver.hpp     # TCP receiver class
+│   ├── udp_receiver.hpp     # UDP receiver class
+│   └── frame_unpacker.hpp   # 2-bit unpacking class
 ├── src/
-│   ├── main.cpp          # Entry point
-│   ├── tcp_receiver.cpp  # TCP implementation
-│   ├── udp_receiver.cpp  # UDP implementation
-│   └── frame_unpacker.cpp # Unpacker implementation
+│   ├── main.cpp             # Entry point
+│   ├── tcp_receiver.cpp     # TCP implementation
+│   ├── udp_receiver.cpp     # UDP implementation
+│   └── frame_unpacker.cpp   # Unpacker implementation
 └── test/
-    ├── fake_camera.py     # TCP camera simulator
-    └── fake_camera_udp.py # UDP camera simulator
+    ├── fake_camera.py       # Basic TCP simulator (moving circles)
+    ├── fake_camera_udp.py   # UDP simulator
+    ├── fast_fake_camera.py  # High-speed TCP test (10K+ FPS)
+    └── realistic_camera.py  # Realistic event patterns
 ```
 
 ## 11. Future Extensions (if needed)
