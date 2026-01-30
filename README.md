@@ -1,6 +1,6 @@
-# TCP to AEDAT4 Converter
+# DVBridge
 
-Convert raw binary event camera frames from custom FPGA/sensor hardware into AEDAT4 format for processing with the DV ecosystem.
+Bridge custom event cameras to the DV ecosystem. Converts raw binary frames from FPGA/sensor hardware into AEDAT4 format for visualization and processing.
 
 ## Overview
 
@@ -48,7 +48,7 @@ sudo apt update
 sudo apt install -y build-essential cmake dv-processing dv-gui
 
 # Build the converter
-cd ~/tcp-to-aedat4-converter
+cd ~/DVBridge
 mkdir build && cd build
 cmake ..
 make
@@ -62,7 +62,7 @@ Open 3 terminal windows and run these commands:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ TERMINAL 1: Start Converter                                                 │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ cd ~/tcp-to-aedat4-converter/build                                          │
+│ cd ~/DVBridge/build                                          │
 │ ./converter                                                                 │
 │                                                                             │
 │ (Waits for camera on port 6000, serves AEDAT4 on port 7777)                │
@@ -83,7 +83,7 @@ Open 3 terminal windows and run these commands:
 │ TERMINAL 3: Start Camera (or use test simulator)                            │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ # FOR TESTING (without real hardware):                                      │
-│ cd ~/tcp-to-aedat4-converter                                                │
+│ cd ~/DVBridge                                                │
 │ python3 test/fake_camera.py                                                 │
 │                                                                             │
 │ # FOR REAL HARDWARE:                                                        │
@@ -153,8 +153,8 @@ dv-gui --version
 ```bash
 # Clone repository
 cd ~
-git clone https://github.com/berkyilmaz01/tcp-to-aedat4-converter.git
-cd tcp-to-aedat4-converter
+git clone https://github.com/berkyilmaz01/DVBridge.git
+cd DVBridge
 
 # Build
 mkdir build && cd build
@@ -209,8 +209,8 @@ Download and install DV-GUI from iniVation:
 ```powershell
 # Clone repository
 cd %USERPROFILE%
-git clone https://github.com/berkyilmaz01/tcp-to-aedat4-converter.git
-cd tcp-to-aedat4-converter
+git clone https://github.com/berkyilmaz01/DVBridge.git
+cd DVBridge
 
 # Create build directory
 mkdir build
@@ -243,7 +243,7 @@ Windows Firewall may block the network ports. Allow them:
 
 ```powershell
 # Terminal 1: Start converter
-cd tcp-to-aedat4-converter\build\Release
+cd DVBridge\build\Release
 .\converter.exe
 
 # Terminal 2: Start DV-GUI
@@ -251,7 +251,7 @@ cd tcp-to-aedat4-converter\build\Release
 "C:\Program Files\iniVation\dv-gui\dv-gui.exe"
 
 # Terminal 3: Test with simulator
-cd tcp-to-aedat4-converter
+cd DVBridge
 python test\fake_camera.py
 ```
 
@@ -262,7 +262,7 @@ python test\fake_camera.py
 Edit the configuration file to match your camera specifications:
 
 ```bash
-nano ~/tcp-to-aedat4-converter/include/config.hpp
+nano ~/DVBridge/include/config.hpp
 ```
 
 **Critical Settings:**
@@ -285,7 +285,7 @@ int64_t frame_interval_us = 10000;  // 10000us = 100 FPS
 
 Rebuild after configuration changes:
 ```bash
-cd ~/tcp-to-aedat4-converter/build
+cd ~/DVBridge/build
 make
 ```
 
@@ -297,14 +297,14 @@ make
 
 **Terminal 1 - Start Converter:**
 ```bash
-cd ~/tcp-to-aedat4-converter/build
+cd ~/DVBridge/build
 ./converter
 ```
 
 Expected output:
 ```text
 ============================================
-   TCP/UDP to AEDAT4 Converter
+   DVBridge
 ============================================
 
 Configuration:
@@ -338,7 +338,7 @@ Configure DV-GUI:
 **Terminal 3 (or Camera Side) - Send Data:**
 For testing without hardware:
 ```bash
-cd ~/tcp-to-aedat4-converter
+cd ~/DVBridge
 python3 test/realistic_camera.py --scene objects --fps 100
 ```
 
@@ -476,7 +476,7 @@ Timestamps are frame-based, not per-event:
 
 **Terminal 1 - Converter:**
 ```bash
-cd ~/tcp-to-aedat4-converter/build
+cd ~/DVBridge/build
 ./converter
 ```
 
@@ -488,7 +488,7 @@ dv-gui
 
 **Terminal 3 - Simulator:**
 ```bash
-cd ~/tcp-to-aedat4-converter
+cd ~/DVBridge
 
 # Basic test (moving circles)
 python3 test/fake_camera.py
@@ -593,7 +593,7 @@ while (true) {
 ### Commands
 ```bash
 # Build converter
-cd ~/tcp-to-aedat4-converter/build && make
+cd ~/DVBridge/build && make
 
 # Run converter
 ./converter

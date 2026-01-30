@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
-project(tcp-to-aedat4-converter
+project(DVBridge
     VERSION 1.0.0
     LANGUAGES C CXX
-    DESCRIPTION "Convert raw binary event camera frames over TCP to AEDAT4 format"
+    DESCRIPTION "Bridge custom event cameras to the DV ecosystem"
 )
 
 # C++20 standard
@@ -123,7 +123,7 @@ endif()
 
 # Print configuration summary
 message(STATUS "")
-message(STATUS "=== TCP to AEDAT4 Converter Configuration ===")
+message(STATUS "=== DVBridge Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")

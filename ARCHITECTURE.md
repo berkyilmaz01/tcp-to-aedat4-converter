@@ -1,4 +1,4 @@
-# TCP to AEDAT4 Converter - Architecture Document
+# DVBridge - Architecture Document
 
 ## 1. Project Goal
 
@@ -194,7 +194,7 @@ for (int byte_idx = 0; byte_idx < frame_size; byte_idx++) {
 ## 10. File Structure
 
 ```
-tcp-to-aedat4-converter/
+DVBridge/
 ├── ARCHITECTURE.md          # This document
 ├── README.md                # User instructions
 ├── CMakeLists.txt           # Build configuration

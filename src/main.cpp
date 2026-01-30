@@ -52,7 +52,7 @@ void printStats(
 int main(int argc, char* argv[])
 {
     std::cout << "============================================" << std::endl;
-    std::cout << "   TCP/UDP to AEDAT4 Converter" << std::endl;
+    std::cout << "   DVBridge" << std::endl;
     std::cout << "============================================" << std::endl;
 
     // Setup signal handler for graceful shutdown
